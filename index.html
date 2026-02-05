@@ -9,23 +9,51 @@
     input{width:100%;padding:10px;margin:10px 0;border:1px solid #ccc;border-radius:8px}
     button{padding:10px 14px;border:0;border-radius:8px;background:#111;color:#fff}
     button:active{opacity:.85}
-    ul{padding-left:18px}
-    li{margin:8px 0}
-    a{cursor:pointer;color:#0b57d0;text-decoration:underline}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .row > *{flex:0 0 auto}
     .muted{color:#666;font-size:13px}
     .box{border:1px solid #eee;border-radius:12px;padding:12px;margin-top:12px;background:#fafafa}
-    #render{border:1px solid #eee;border-radius:10px;background:#fff;padding:12px;min-height:120px}
+    ul{padding-left:18px;margin:10px 0}
+    li{margin:10px 0}
+    a{cursor:pointer;color:#0b57d0;text-decoration:underline}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eee;font-size:12px;margin-left:8px}
+    .new{background:#ffe8a3}
+    #render{border:1px solid #eee;border-radius:10px;background:#fff;padding:12px;min-height:120px;white-space:pre-wrap}
+    .otp{font-weight:700;font-size:18px;padding:6px 10px;border-radius:10px;background:#111;color:#fff;display:inline-block}
+    .danger{color:#b00020}
   </style>
 </head>
 <body>
 
 <h2>📩 CatchMail Inbox Viewer</h2>
 <p class="muted">
-Nhập email → Load Inbox → bấm vào mail để xem nội dung.
+Nhập email → Load Inbox → bấm vào mail để xem OTP. <br>
+Tool này <b>không lưu email/OTP</b> (không cookie/localStorage). Đóng tab là mất.
 </p>
 
-<input id="email" placeholder="nhập email, ví dụ test@phuongvn.io.vn">
-<button onclick="loadInbox()">Load Inbox</button>
+<div class="box">
+  <div class="row">
+    <div style="flex:1 1 320px;min-width:260px">
+      <input id="email" placeholder="nhập email, ví dụ test@phuongvn.io.vn">
+      <div id="hint" class="muted"></div>
+    </div>
+
+    <button onclick="loadInbox(true)">Load Inbox</button>
+
+    <label class="muted" style="display:flex;align-items:center;gap:8px">
+      <input id="autorefresh" type="checkbox" onchange="toggleAutoRefresh()">
+      Auto refresh
+    </label>
+
+    <select id="interval" onchange="toggleAutoRefresh()" style="padding:10px;border-radius:8px;border:1px solid #ccc">
+      <option value="3000">3s</option>
+      <option value="5000" selected>5s</option>
+      <option value="8000">8s</option>
+    </select>
+  </div>
+
+  <div id="status" class="muted"></div>
+</div>
 
 <div class="box">
   <b>Danh sách mail</b>
@@ -33,48 +61,103 @@ Nhập email → Load Inbox → bấm vào mail để xem nội dung.
 </div>
 
 <div class="box">
-  <b>Nội dung mail</b>
+  <div class="row" style="justify-content:space-between">
+    <b>Nội dung / OTP</b>
+    <button id="copyBtn" onclick="copyOtp()" style="display:none">📋 Copy OTP</button>
+  </div>
+  <div id="otpBox" style="margin:10px 0;display:none"></div>
   <div id="render" class="muted">Chọn 1 mail để xem nội dung.</div>
 </div>
 
 <script>
-const API = "https://catchmail-inbox.vercel.app/api";
+/** ✅ CẤU HÌNH **/
+const API = "https://catchmail-inbox.vercel.app/api"; // link Vercel của bạn
+const ALLOWED_DOMAIN = "@phuongvn.io.vn";             // khóa domain cho an toàn
+const OTP_REGEX = /\b\d{4,8}\b/g;                     // OTP 4–8 số
 
+/** ✅ KHÔNG LƯU: chỉ dùng RAM **/
+let seenIds = new Set();   // đánh dấu mail đã thấy (trong phiên)
+let currentOtp = "";       // OTP đang hiển thị
+let refreshTimer = null;
+let lastLoadedEmail = "";
+
+/** helpers **/
 function esc(str){
   return String(str).replace(/[&<>"']/g, s => ({
     "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
   }[s]));
 }
-
+function looksLikeHtml(s){ return /<\/?[a-z][\s\S]*>/i.test(s); }
 function extractBody(data){
   const tries = [
-    data?.body?.html,
-    data?.body?.text,
-    data?.html,
-    data?.text,
-    data?.content?.html,
-    data?.content?.text
+    data?.body?.html, data?.body?.text,
+    data?.html, data?.text,
+    data?.content?.html, data?.content?.text
   ];
   for (const v of tries){
     if (typeof v === "string" && v.trim()) return v;
   }
-  return null;
+  return "";
+}
+function setStatus(msg, isErr=false){
+  const el = document.getElementById("status");
+  el.innerHTML = isErr ? `<span class="danger">${esc(msg)}</span>` : esc(msg);
+}
+function domainOk(email){
+  return email.toLowerCase().endsWith(ALLOWED_DOMAIN.toLowerCase());
 }
 
-function looksLikeHtml(s){
-  return /<\/?[a-z][\s\S]*>/i.test(s);
-}
-
-async function loadInbox() {
+function validateEmailOrAlert(){
   const email = document.getElementById("email").value.trim();
-  if (!email) return alert("Nhập email trước");
+  const hint = document.getElementById("hint");
+  hint.textContent = "";
+
+  if (!email) { alert("Nhập email trước"); return null; }
+  if (!email.includes("@")) { alert("Email không hợp lệ"); return null; }
+  if (!domainOk(email)) {
+    hint.innerHTML = `<span class="danger">Chỉ cho phép domain ${esc(ALLOWED_DOMAIN)}</span>`;
+    alert(`Chỉ cho phép domain ${ALLOWED_DOMAIN}`);
+    return null;
+  }
+  return email;
+}
+
+/** Auto refresh: không chạy nền khi tab ẩn **/
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopAutoRefresh();
+  else if (document.getElementById("autorefresh").checked) startAutoRefresh();
+});
+
+function startAutoRefresh(){
+  stopAutoRefresh();
+  const ms = parseInt(document.getElementById("interval").value, 10) || 5000;
+  refreshTimer = setInterval(() => loadInbox(false), ms);
+  setStatus(`Auto refresh: mỗi ${Math.round(ms/1000)}s`);
+}
+function stopAutoRefresh(){
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = null;
+  setStatus("");
+}
+function toggleAutoRefresh(){
+  const on = document.getElementById("autorefresh").checked;
+  if (on) startAutoRefresh();
+  else stopAutoRefresh();
+}
+
+/** Load inbox **/
+async function loadInbox(userClick=false) {
+  const email = validateEmailOrAlert();
+  if (!email) return;
+
+  // reset "mail mới" nếu người dùng đổi email
+  if (lastLoadedEmail && lastLoadedEmail !== email) {
+    seenIds = new Set();
+  }
+  lastLoadedEmail = email;
 
   const list = document.getElementById("list");
-  const render = document.getElementById("render");
-
-  list.innerHTML = "<li class='muted'>Đang tải…</li>";
-  render.className = "muted";
-  render.textContent = "Chọn 1 mail để xem nội dung.";
+  if (userClick) list.innerHTML = "<li class='muted'>Đang tải…</li>";
 
   try {
     const r = await fetch(`${API}/inbox?address=${encodeURIComponent(email)}`);
@@ -94,9 +177,12 @@ async function loadInbox() {
       const from = m.from ? ` — <span class="muted">${esc(m.from)}</span>` : "";
       const date = m.date ? ` <span class="muted">(${esc(m.date)})</span>` : "";
 
+      const isNew = !seenIds.has(m.id);
+      const newPill = isNew ? `<span class="pill new">NEW</span>` : `<span class="pill">seen</span>`;
+
       li.innerHTML = `
         <a onclick="loadMsg('${esc(m.id)}','${esc(email)}')">📧 ${esc(subject)}</a>
-        ${from}${date}
+        ${newPill}${from}${date}
       `;
       list.appendChild(li);
     });
@@ -106,14 +192,25 @@ async function loadInbox() {
   }
 }
 
+/** Load message + OTP **/
 async function loadMsg(id, mailbox) {
   const render = document.getElementById("render");
+  const otpBox = document.getElementById("otpBox");
+  const copyBtn = document.getElementById("copyBtn");
+
   render.className = "muted";
   render.textContent = "Đang tải nội dung mail…";
+  otpBox.style.display = "none";
+  otpBox.innerHTML = "";
+  copyBtn.style.display = "none";
+  currentOtp = "";
 
   try {
     const r = await fetch(`${API}/message?id=${encodeURIComponent(id)}&mailbox=${encodeURIComponent(mailbox)}`);
     const data = await r.json();
+
+    // đánh dấu đã thấy (RAM only)
+    seenIds.add(id);
 
     const body = extractBody(data);
     if (!body) {
@@ -121,15 +218,45 @@ async function loadMsg(id, mailbox) {
       return;
     }
 
+    // OTP highlight
+    const otps = body.match(OTP_REGEX) || [];
+    if (otps.length > 0) {
+      currentOtp = otps[0];
+      otpBox.style.display = "";
+      otpBox.innerHTML = `OTP: <span class="otp">${esc(currentOtp)}</span>`;
+      copyBtn.style.display = "";
+    }
+
     render.className = "";
     if (looksLikeHtml(body)) {
+      // an toàn hơn: nếu muốn tuyệt đối, mình đổi luôn sang text-only
       render.innerHTML = body;
     } else {
       render.textContent = body;
     }
 
   } catch (e) {
+    render.className = "muted";
     render.textContent = "Lỗi đọc mail.";
+  }
+}
+
+async function copyOtp(){
+  if (!currentOtp) return alert("Chưa có OTP");
+  try {
+    await navigator.clipboard.writeText(currentOtp);
+    setStatus("✅ Đã copy OTP");
+    setTimeout(()=>setStatus(""), 1500);
+  } catch {
+    // fallback cho iOS cũ
+    const t = document.createElement("textarea");
+    t.value = currentOtp;
+    document.body.appendChild(t);
+    t.select();
+    document.execCommand("copy");
+    document.body.removeChild(t);
+    setStatus("✅ Đã copy OTP");
+    setTimeout(()=>setStatus(""), 1500);
   }
 }
 </script>
