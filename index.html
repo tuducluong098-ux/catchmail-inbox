@@ -14,13 +14,14 @@
     a{cursor:pointer;color:#0b57d0;text-decoration:underline}
     .muted{color:#666;font-size:13px}
     .box{border:1px solid #eee;border-radius:12px;padding:12px;margin-top:12px;background:#fafafa}
-    #content{white-space:pre-wrap}
+    #raw{white-space:pre-wrap;background:#111;color:#ddd;padding:10px;border-radius:10px;overflow:auto}
+    #render{border:1px solid #eee;border-radius:10px;background:#fff;padding:10px;min-height:120px}
   </style>
 </head>
 <body>
 
 <h2>📩 CatchMail Inbox Viewer</h2>
-<p class="muted">Nhập email (theo domain bạn dùng), bấm Load Inbox → bấm vào tiêu đề mail để xem nội dung.</p>
+<p class="muted">Nhập email → Load Inbox → bấm vào mail để xem nội dung. Nếu mail không có body text/html, mình sẽ hiện JSON thô để bạn biết field nằm ở đâu.</p>
 
 <input id="email" placeholder="nhập email, ví dụ test@phuongvn.io.vn">
 <button onclick="loadInbox()">Load Inbox</button>
@@ -32,21 +33,65 @@
 
 <div class="box">
   <b>Nội dung mail</b>
-  <div id="content" class="muted">Chọn 1 mail để xem nội dung.</div>
+  <div id="render" class="muted">Chọn 1 mail để xem nội dung.</div>
+</div>
+
+<div class="box">
+  <b>JSON thô (debug)</b>
+  <div id="raw" class="muted">—</div>
 </div>
 
 <script>
 const API = "https://catchmail-inbox.vercel.app/api"; // đúng link Vercel của bạn
+
+function esc(str){
+  return String(str).replace(/[&<>"']/g, s => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[s]));
+}
+
+// Thử lấy body từ nhiều field khác nhau (vì mỗi API trả cấu trúc khác)
+function extractBody(data){
+  // các dạng hay gặp
+  const tries = [
+    data?.body?.html,
+    data?.body?.text,
+    data?.html,
+    data?.text,
+    data?.body_html,
+    data?.body_text,
+    data?.content?.html,
+    data?.content?.text,
+    data?.message?.body?.html,
+    data?.message?.body?.text,
+    data?.data?.body?.html,
+    data?.data?.body?.text,
+    data?.payload?.html,
+    data?.payload?.text,
+  ];
+
+  for (const v of tries){
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  return null;
+}
+
+function looksLikeHtml(s){
+  return /<\/?[a-z][\s\S]*>/i.test(s);
+}
 
 async function loadInbox() {
   const email = document.getElementById("email").value.trim();
   if (!email) return alert("Nhập email trước");
 
   const list = document.getElementById("list");
-  const content = document.getElementById("content");
+  const render = document.getElementById("render");
+  const raw = document.getElementById("raw");
 
   list.innerHTML = "<li class='muted'>Đang tải…</li>";
-  content.textContent = "Chọn 1 mail để xem nội dung.";
+  render.className = "muted";
+  render.textContent = "Chọn 1 mail để xem nội dung.";
+  raw.textContent = "—";
 
   try {
     const r = await fetch(`${API}/inbox?address=${encodeURIComponent(email)}`);
@@ -63,69 +108,59 @@ async function loadInbox() {
     messages.forEach(m => {
       const li = document.createElement("li");
       const subject = m.subject || "(no subject)";
-      const from = m.from ? ` — <span class="muted">${escapeHtml(m.from)}</span>` : "";
-      const date = m.date ? ` <span class="muted">(${escapeHtml(m.date)})</span>` : "";
+      const from = m.from ? ` — <span class="muted">${esc(m.from)}</span>` : "";
+      const date = m.date ? ` <span class="muted">(${esc(m.date)})</span>` : "";
 
       li.innerHTML = `
-        <a onclick="loadMsg('${m.id}','${email}')">📧 ${escapeHtml(subject)}</a>
+        <a onclick="loadMsg('${esc(m.id)}','${esc(email)}')">📧 ${esc(subject)}</a>
         ${from}${date}
       `;
       list.appendChild(li);
     });
 
   } catch (e) {
-    list.innerHTML = `<li class="muted">Lỗi load inbox: ${escapeHtml(String(e))}</li>`;
+    list.innerHTML = `<li class="muted">Lỗi load inbox: ${esc(String(e))}</li>`;
   }
 }
 
 async function loadMsg(id, mailbox) {
-  const contentEl = document.getElementById("content");
-  contentEl.className = "muted";
-  contentEl.textContent = "Đang tải nội dung mail…";
+  const render = document.getElementById("render");
+  const raw = document.getElementById("raw");
+
+  render.className = "muted";
+  render.textContent = "Đang tải nội dung mail…";
+  raw.textContent = "—";
 
   try {
-    const r = await fetch(`${API}/message?id=${encodeURIComponent(id)}&mailbox=${encodeURIComponent(mailbox)}`);
+    const url = `${API}/message?id=${encodeURIComponent(id)}&mailbox=${encodeURIComponent(mailbox)}`;
+    const r = await fetch(url);
     const data = await r.json();
 
-    // Ưu tiên HTML → TEXT → fallback JSON
-    if (data && data.body) {
-      if (data.body.html) {
-        contentEl.className = "";
-        contentEl.innerHTML = data.body.html;   // show HTML
-        return;
-      }
-      if (data.body.text) {
-        contentEl.className = "";
-        contentEl.textContent = data.body.text; // show text
-        return;
-      }
-    }
+    // luôn hiện JSON thô để chắc chắn không “trắng”
+    raw.textContent = JSON.stringify(data, null, 2);
 
-    // Một số API có thể trả khác tên field
-    if (data && data.html) {
-      contentEl.className = "";
-      contentEl.innerHTML = data.html;
-      return;
-    }
-    if (data && data.text) {
-      contentEl.className = "";
-      contentEl.textContent = data.text;
+    const body = extractBody(data);
+
+    if (body) {
+      if (looksLikeHtml(body)) {
+        render.className = "";
+        render.innerHTML = body;     // render HTML
+      } else {
+        render.className = "";
+        render.textContent = body;   // render text
+      }
       return;
     }
 
-    contentEl.className = "";
-    contentEl.textContent = JSON.stringify(data, null, 2);
+    // nếu không tìm thấy body -> báo rõ
+    render.className = "muted";
+    render.textContent = "Không thấy nội dung body trong response. Xem JSON thô bên dưới để biết field nằm ở đâu (mình sẽ chỉnh theo field đó).";
 
   } catch (e) {
-    contentEl.className = "muted";
-    contentEl.textContent = "Lỗi đọc mail: " + String(e);
+    render.className = "muted";
+    render.textContent = "Lỗi đọc mail: " + String(e);
+    raw.textContent = String(e);
   }
-}
-
-function escapeHtml(str){
-  return String(str).replace(/[&<>"']/g, s => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-  }[s]));
 }
 </script>
 
