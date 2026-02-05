@@ -5,59 +5,127 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>CatchMail Inbox Viewer</title>
   <style>
-    body{font-family:Arial;padding:15px}
-    input{width:100%;padding:8px;margin:8px 0}
-    button{padding:8px 12px}
-    li{margin:6px 0}
-    pre{white-space:pre-wrap;background:#f5f5f5;padding:10px}
-    a{cursor:pointer}
+    body{font-family:Arial;padding:15px;max-width:900px;margin:auto}
+    input{width:100%;padding:10px;margin:10px 0;border:1px solid #ccc;border-radius:8px}
+    button{padding:10px 14px;border:0;border-radius:8px;background:#111;color:#fff}
+    button:active{opacity:.85}
+    ul{padding-left:18px}
+    li{margin:8px 0}
+    a{cursor:pointer;color:#0b57d0;text-decoration:underline}
+    .muted{color:#666;font-size:13px}
+    .box{border:1px solid #eee;border-radius:12px;padding:12px;margin-top:12px;background:#fafafa}
+    #content{white-space:pre-wrap}
   </style>
 </head>
 <body>
 
 <h2>📩 CatchMail Inbox Viewer</h2>
+<p class="muted">Nhập email (theo domain bạn dùng), bấm Load Inbox → bấm vào tiêu đề mail để xem nội dung.</p>
 
-<input id="email" placeholder="nhập email, ví dụ abc@domain.com">
+<input id="email" placeholder="nhập email, ví dụ test@phuongvn.io.vn">
 <button onclick="loadInbox()">Load Inbox</button>
 
-<ul id="list"></ul>
+<div class="box">
+  <b>Danh sách mail</b>
+  <ul id="list"><li class="muted">Chưa load…</li></ul>
+</div>
 
-<h3>Nội dung mail</h3>
-<pre id="content"></pre>
+<div class="box">
+  <b>Nội dung mail</b>
+  <div id="content" class="muted">Chọn 1 mail để xem nội dung.</div>
+</div>
 
 <script>
-const API = "https://catchmail-inbox.vercel.app/api"; // LINK VERCEL CỦA BẠN
+const API = "https://catchmail-inbox.vercel.app/api"; // đúng link Vercel của bạn
 
 async function loadInbox() {
   const email = document.getElementById("email").value.trim();
   if (!email) return alert("Nhập email trước");
 
-  const r = await fetch(`${API}/inbox?address=${email}`);
-  const res = await r.json();
-  const messages = res.messages || [];
-
   const list = document.getElementById("list");
-  list.innerHTML = "";
+  const content = document.getElementById("content");
 
-  if (messages.length === 0) {
-    list.innerHTML = "<li>Chưa có mail</li>";
-    return;
+  list.innerHTML = "<li class='muted'>Đang tải…</li>";
+  content.textContent = "Chọn 1 mail để xem nội dung.";
+
+  try {
+    const r = await fetch(`${API}/inbox?address=${encodeURIComponent(email)}`);
+    const res = await r.json();
+    const messages = res.messages || [];
+
+    list.innerHTML = "";
+
+    if (messages.length === 0) {
+      list.innerHTML = "<li class='muted'>Chưa có mail</li>";
+      return;
+    }
+
+    messages.forEach(m => {
+      const li = document.createElement("li");
+      const subject = m.subject || "(no subject)";
+      const from = m.from ? ` — <span class="muted">${escapeHtml(m.from)}</span>` : "";
+      const date = m.date ? ` <span class="muted">(${escapeHtml(m.date)})</span>` : "";
+
+      li.innerHTML = `
+        <a onclick="loadMsg('${m.id}','${email}')">📧 ${escapeHtml(subject)}</a>
+        ${from}${date}
+      `;
+      list.appendChild(li);
+    });
+
+  } catch (e) {
+    list.innerHTML = `<li class="muted">Lỗi load inbox: ${escapeHtml(String(e))}</li>`;
   }
-
-  messages.forEach(m => {
-    const li = document.createElement("li");
-    li.innerHTML = `<a onclick="loadMsg('${m.id}','${email}')">
-      ${m.subject || "(no subject)"}
-    </a>`;
-    list.appendChild(li);
-  });
 }
 
 async function loadMsg(id, mailbox) {
-  const r = await fetch(`${API}/message?id=${id}&mailbox=${mailbox}`);
-  const data = await r.json();
-  document.getElementById("content").textContent =
-    data.text || data.html || JSON.stringify(data, null, 2);
+  const contentEl = document.getElementById("content");
+  contentEl.className = "muted";
+  contentEl.textContent = "Đang tải nội dung mail…";
+
+  try {
+    const r = await fetch(`${API}/message?id=${encodeURIComponent(id)}&mailbox=${encodeURIComponent(mailbox)}`);
+    const data = await r.json();
+
+    // Ưu tiên HTML → TEXT → fallback JSON
+    if (data && data.body) {
+      if (data.body.html) {
+        contentEl.className = "";
+        contentEl.innerHTML = data.body.html;   // show HTML
+        return;
+      }
+      if (data.body.text) {
+        contentEl.className = "";
+        contentEl.textContent = data.body.text; // show text
+        return;
+      }
+    }
+
+    // Một số API có thể trả khác tên field
+    if (data && data.html) {
+      contentEl.className = "";
+      contentEl.innerHTML = data.html;
+      return;
+    }
+    if (data && data.text) {
+      contentEl.className = "";
+      contentEl.textContent = data.text;
+      return;
+    }
+
+    contentEl.className = "";
+    contentEl.textContent = JSON.stringify(data, null, 2);
+
+  } catch (e) {
+    contentEl.className = "muted";
+    contentEl.textContent = "Lỗi đọc mail: " + String(e);
+  }
+}
+
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, s => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[s]));
 }
 </script>
 
