@@ -14,14 +14,15 @@
     a{cursor:pointer;color:#0b57d0;text-decoration:underline}
     .muted{color:#666;font-size:13px}
     .box{border:1px solid #eee;border-radius:12px;padding:12px;margin-top:12px;background:#fafafa}
-    #raw{white-space:pre-wrap;background:#111;color:#ddd;padding:10px;border-radius:10px;overflow:auto}
-    #render{border:1px solid #eee;border-radius:10px;background:#fff;padding:10px;min-height:120px}
+    #render{border:1px solid #eee;border-radius:10px;background:#fff;padding:12px;min-height:120px}
   </style>
 </head>
 <body>
 
 <h2>📩 CatchMail Inbox Viewer</h2>
-<p class="muted">Nhập email → Load Inbox → bấm vào mail để xem nội dung. Nếu mail không có body text/html, mình sẽ hiện JSON thô để bạn biết field nằm ở đâu.</p>
+<p class="muted">
+Nhập email → Load Inbox → bấm vào mail để xem nội dung.
+</p>
 
 <input id="email" placeholder="nhập email, ví dụ test@phuongvn.io.vn">
 <button onclick="loadInbox()">Load Inbox</button>
@@ -36,13 +37,8 @@
   <div id="render" class="muted">Chọn 1 mail để xem nội dung.</div>
 </div>
 
-<div class="box">
-  <b>JSON thô (debug)</b>
-  <div id="raw" class="muted">—</div>
-</div>
-
 <script>
-const API = "https://catchmail-inbox.vercel.app/api"; // đúng link Vercel của bạn
+const API = "https://catchmail-inbox.vercel.app/api";
 
 function esc(str){
   return String(str).replace(/[&<>"']/g, s => ({
@@ -50,26 +46,15 @@ function esc(str){
   }[s]));
 }
 
-// Thử lấy body từ nhiều field khác nhau (vì mỗi API trả cấu trúc khác)
 function extractBody(data){
-  // các dạng hay gặp
   const tries = [
     data?.body?.html,
     data?.body?.text,
     data?.html,
     data?.text,
-    data?.body_html,
-    data?.body_text,
     data?.content?.html,
-    data?.content?.text,
-    data?.message?.body?.html,
-    data?.message?.body?.text,
-    data?.data?.body?.html,
-    data?.data?.body?.text,
-    data?.payload?.html,
-    data?.payload?.text,
+    data?.content?.text
   ];
-
   for (const v of tries){
     if (typeof v === "string" && v.trim()) return v;
   }
@@ -86,12 +71,10 @@ async function loadInbox() {
 
   const list = document.getElementById("list");
   const render = document.getElementById("render");
-  const raw = document.getElementById("raw");
 
   list.innerHTML = "<li class='muted'>Đang tải…</li>";
   render.className = "muted";
   render.textContent = "Chọn 1 mail để xem nội dung.";
-  raw.textContent = "—";
 
   try {
     const r = await fetch(`${API}/inbox?address=${encodeURIComponent(email)}`);
@@ -119,47 +102,34 @@ async function loadInbox() {
     });
 
   } catch (e) {
-    list.innerHTML = `<li class="muted">Lỗi load inbox: ${esc(String(e))}</li>`;
+    list.innerHTML = `<li class="muted">Lỗi load inbox</li>`;
   }
 }
 
 async function loadMsg(id, mailbox) {
   const render = document.getElementById("render");
-  const raw = document.getElementById("raw");
-
   render.className = "muted";
   render.textContent = "Đang tải nội dung mail…";
-  raw.textContent = "—";
 
   try {
-    const url = `${API}/message?id=${encodeURIComponent(id)}&mailbox=${encodeURIComponent(mailbox)}`;
-    const r = await fetch(url);
+    const r = await fetch(`${API}/message?id=${encodeURIComponent(id)}&mailbox=${encodeURIComponent(mailbox)}`);
     const data = await r.json();
 
-    // luôn hiện JSON thô để chắc chắn không “trắng”
-    raw.textContent = JSON.stringify(data, null, 2);
-
     const body = extractBody(data);
-
-    if (body) {
-      if (looksLikeHtml(body)) {
-        render.className = "";
-        render.innerHTML = body;     // render HTML
-      } else {
-        render.className = "";
-        render.textContent = body;   // render text
-      }
+    if (!body) {
+      render.textContent = "Mail không có nội dung hiển thị.";
       return;
     }
 
-    // nếu không tìm thấy body -> báo rõ
-    render.className = "muted";
-    render.textContent = "Không thấy nội dung body trong response. Xem JSON thô bên dưới để biết field nằm ở đâu (mình sẽ chỉnh theo field đó).";
+    render.className = "";
+    if (looksLikeHtml(body)) {
+      render.innerHTML = body;
+    } else {
+      render.textContent = body;
+    }
 
   } catch (e) {
-    render.className = "muted";
-    render.textContent = "Lỗi đọc mail: " + String(e);
-    raw.textContent = String(e);
+    render.textContent = "Lỗi đọc mail.";
   }
 }
 </script>
