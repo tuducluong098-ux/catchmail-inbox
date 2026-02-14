@@ -120,7 +120,7 @@ async function checkLatestOtp(email, messages){
 
   if (!messages || messages.length === 0) return;
 
-  const latest = messages[0]; // latest mail (usually newest)
+  const latest = messages[0]; // newest (after sort)
 
   // Only show Quick OTP if latest is NEW in this session
   if (seenIds.has(latest.id)) return;
@@ -172,6 +172,9 @@ async function loadInbox(userClick=false) {
     const r = await fetch(`${API}/inbox?address=${encodeURIComponent(email)}`);
     const res = await r.json();
     const messages = res.messages || [];
+
+    // SORT: newest first
+    messages.sort((a,b) => new Date(b.date || 0) - new Date(a.date || 0));
 
     list.innerHTML = "";
 
@@ -250,7 +253,7 @@ async function loadMsg(id, mailbox) {
 
     render.className = "";
     if (looksLikeHtml(body)) {
-      render.innerHTML = body; // render HTML (as requested)
+      render.innerHTML = body; // render HTML
     } else {
       render.textContent = body;
     }
